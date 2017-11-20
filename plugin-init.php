@@ -65,7 +65,7 @@ class login_with_twitch
     {
         /**
          * This function will trigger either creating a user or logging in an existing user.
-         *  
+         *
          */
         if (isset($request['code']) && !empty($request['code'])) {
             if (preg_match("([a-z0-9]{30})", $request['code'])) {
@@ -164,29 +164,29 @@ class login_with_twitch
                         <p>
                             <strong>Install steps:</strong>
                         </p>
-                            <ol>
-                                <li>After installing this plugin head to API Settings on the left sidebar.</li>
-                                <li>In the "Twitch Name" field add your twitch name.</li>
-                                <li>Now head over to Twitch and <a href="https://dev.twitch.tv/dashboard/apps/create"> register your own Twitch App </a></li>
-                                <li>Under OAuth Redirect URL insert the url from your dashboard in the API Settings.</li>
-                                <li>Once registered you should receive a Client ID and a Client Secret. (Client ID is a public ID and everyone will see it. Do not allow to see your secret though.) </li>
-                                <li>Insert the Client ID & Secret into your WordPress dashboard in the API settings section. </li>
-                                <li>Now you can log out and test everything works. By using the "Login With Twitch" button on your admin login page.</li>
-                            </ol>
+                        <ol>
+                            <li>After installing this plugin head to API Settings on the left sidebar.</li>
+                            <li>In the "Twitch Name" field add your twitch name.</li>
+                            <li>Now head over to Twitch and <a href="https://dev.twitch.tv/dashboard/apps/create"> register your own Twitch App </a></li>
+                            <li>Under OAuth Redirect URL insert the url from your dashboard in the API Settings.</li>
+                            <li>Once registered you should receive a Client ID and a Client Secret. (Client ID is a public ID and everyone will see it. Do not allow to see your secret though.) </li>
+                            <li>Insert the Client ID & Secret into your WordPress dashboard in the API settings section. </li>
+                            <li>Now you can log out and test everything works. By using the "Login With Twitch" button on your admin login page.</li>
+                        </ol>
 
                         <p>If you have any issues please feel free to raise an issue on GitHub using <a href="https://github.com/cmcgee93/wp-login-with-twitch/blob/master/ISSUE_TEMPLATE.md">this template.</a></p>
-                </div>
-                    <?php if($gitHubData !== false): ?>
-                    <div style="width: calc(50% - 2px); margin-left: 1px; background: #efefef; float: left;">
-                        <h3>Plugin Information</h3>
-                        <ul>
-                            <li>Current Install Version - <?php echo $info['Version']; ?></li>
-                            <li>Latest Version - <?php echo $gitHubData->tag_name; ?></li>
-                            <li>Build Name - <?php echo $gitHubData->name; ?></li>
-                            <li><?php echo  ($gitHubData->prerelease === false) ? 'Release' : 'Pre-Release Build'; ?></li>
-                            <li><a href="<?php echo $info['AuthorURI']; ?>">Github Repo</a></li>
-                        </ul>
                     </div>
+                    <?php if($gitHubData !== false): ?>
+                        <div style="width: calc(50% - 2px); margin-left: 1px; background: #efefef; float: left;">
+                            <h3>Plugin Information</h3>
+                            <ul>
+                                <li>Current Install Version - <?php echo $info['Version']; ?></li>
+                                <li>Latest Version - <?php echo $gitHubData->tag_name; ?></li>
+                                <li>Build Name - <?php echo $gitHubData->name; ?></li>
+                                <li><?php echo  ($gitHubData->prerelease === false) ? 'Release' : 'Pre-Release Build'; ?></li>
+                                <li><a href="<?php echo $info['AuthorURI']; ?>">Github Repo</a></li>
+                            </ul>
+                        </div>
                     <?php endif; ?>
                 </div>
             </div>
@@ -508,3 +508,12 @@ class login_with_twitch
 }
 
 $helper = new login_with_twitch();
+
+register_deactivation_hook( __FILE__, 'deactivateScript' );
+register_uninstall_hook(    __FILE__, 'uninstallScript');
+function deactivateScript(){
+    // Currently there is nothing that needs to execute when you deactivate this plugin.
+}
+function uninstallScript(){
+    delete_option('twitch_api_options');
+}
