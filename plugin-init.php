@@ -92,8 +92,16 @@ class login_with_twitch
             exit;
         } elseif($user === false) {
             //We don't have a user, setup a new one.
+			if($this->preCheckUser($userData->email) == true or username_exists($userData->name) !== false){
+                //Make sure the email isn't already registered to prevent accidental modifications to an already existing account.
+                wp_die('This email is already in use. Please ask the site owner for support.'); // User failed to create
+            }
             $user = $this->createNewUser($userData->_id, $userData->name, $userData->display_name, $userData->email, $userauth->access_token);
-            if ($user) {
+			if(is_wp_error($user)){
+                //If there was some kind of error in the user creation then just drop everything an die.
+                wp_die('There was an issue creating your account. Please contact the site owner.');
+            }
+            if ($user && !is_wp_error($user)) {
                 //User is just the ID in this case so we don't need to access any arrays or objects.
                 wp_set_current_user($user, $userData->name); // Login user
                 wp_set_auth_cookie($user, false, true); // Login user
@@ -360,7 +368,21 @@ class login_with_twitch
         }
         die(); // Shouldn't land here. Just die in this case.
     }
-
+    public function preCheckUser($email){
+        $args = array(
+            'search'       => $email,
+            'number'       => 1,
+            'fields'       => 'all',
+        );
+        $result = get_users( $args );
+        if(!empty($result) && is_array($result)){
+            return true;
+        }else{
+            //No user was found.
+            return false;
+        }
+        wp_die('Error searching for users'); // Should never land here.
+    }
     public function findUser($username, $email, $twitchID)
     {
         $args = array(
