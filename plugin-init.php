@@ -1,19 +1,26 @@
 <?php
 defined('ABSPATH') or die("Cannot access pages directly.");
+require_once(plugin_dir_path(__FILE__) . '/admin/follower-post-type.php');
+require_once(plugin_dir_path(__FILE__) . '/admin/sub-post-type.php');
+
 /*
 Plugin Name: Login with Twitch
 Plugin URI: https://github.com/cmcgee93/wp-login-with-twitch
 Description: Allows you to create users/login with Twitch
-Version: 0.2
+Version: 0.3
 Author: Chris McGee
 Author URI: https://github.com/cmcgee93
 */
+
 class login_with_twitch
 {
     private $clientID;
     private $clientSecret;
     private $ourTwitchName;
     private $options;
+    private $redirectPage;
+    private $subRedirectPage;
+
     public function __construct()
     {
         $this->hooks(); // Run WordPress Hooks
@@ -21,6 +28,8 @@ class login_with_twitch
         $this->clientID = $fields['client_id']; // Set the client ID
         $this->clientSecret = $fields['client_secret']; // Setting Client Secret
         $this->ourTwitchName = $fields['our_twitch_name'];  // Setting Twitch Name For Website
+        $this->redirectPage = isset($fields['redirect_user']) ? $fields['redirect_user'] : site_url() ;  // where redirects go for anyone not following
+        $this->subRedirectPage = isset($fields['redirect_user_sub']) ? $fields['redirect_user_sub'] : site_url(); // where redirects go for anyone not subbed to us
 
     }
 
@@ -33,7 +42,53 @@ class login_with_twitch
         add_action('rest_api_init', array($this, 'addRegisterEndPoint')); // Add End Point
         add_action('admin_menu', array($this, 'loginWithTwitchSettings')); // Add menu page
         add_action('admin_init', array($this, 'registerTwitchSettings')); // Register plugin settings
-        add_action( 'edit_user_profile', array($this, 'twitchUserProfileFields') ); // Add User Settings
+        add_action('edit_user_profile', array($this, 'twitchUserProfileFields')); // Add User Settings
+        add_action('init', 'followerOnlyPosts', 0); // Register follower only post type.
+        add_action('init', 'subscriberOnlyPosts', 0); // Register Subscriber only post type.
+        add_action('pre_get_posts', array($this, 'testCase'), 0); // Register Subscriber only post type.
+    }
+
+    public function testCase($query)
+    {
+        /**
+         * TODO Check for subscriber and send them somewhere
+         */
+        if (!is_admin() && in_array($query->get('post_type'), array('follower-posts'))) {
+            if (!is_user_logged_in()) {
+                //User is not logged in
+                wp_redirect(get_admin_url());
+                exit();
+                return $query;
+            } else {
+                $userFollows = (int)get_user_meta(get_current_user_id(), 'user_follows', true);
+                if ($userFollows !== 1) {
+                    //User doesn't follow us.
+                    wp_redirect(get_permalink($this->redirectPage));
+                    exit();
+                    return $query;
+                } else {
+                    return $query;
+                }
+            }
+        }
+        if (!is_admin() && in_array($query->get('post_type'), array('subscriber-posts'))) {
+            if (!is_user_logged_in()) {
+                //User is not logged in
+                wp_redirect(get_admin_url());
+                exit();
+                return $query;
+            } else {
+                $userSubs = (int)get_user_meta(get_current_user_id(), 'user_subs', true);
+                if ($userSubs !== 1) {
+                    //User doesn't follow us.
+                    wp_redirect(get_permalink($this->subRedirectPage));
+                    exit();
+                    return $query;
+                } else {
+                    return $query;
+                }
+            }
+        }
     }
 
     /**
@@ -50,7 +105,7 @@ class login_with_twitch
 
     public function authenticateUser($userCode)
     {
-        $request = wp_remote_post("https://api.twitch.tv/api/oauth2/token?client_id=$this->clientID&client_secret=$this->clientSecret&code=$userCode&grant_type=authorization_code&redirect_uri=".$this->getRedirectUrl(true));
+        $request = wp_remote_post("https://api.twitch.tv/api/oauth2/token?client_id=$this->clientID&client_secret=$this->clientSecret&code=$userCode&grant_type=authorization_code&redirect_uri=" . $this->getRedirectUrl(true));
         if ($request['response']['code'] === 200) {
             return json_decode($request['body']);
         } elseif ($request['response']['code'] === 400) {
@@ -83,6 +138,7 @@ class login_with_twitch
         //Determine if we should create user or login.
         $user = $this->findUser($userData->name, $userData->email, $userData->_id);
         if (is_array($user) && !empty($user)) {
+            $this->updateTwitchUserMeta($user[0], $userData->name, $userauth->access_token);
             //We found a user so lets log them in.
             //User returns an array, 0 index should be our account were looking as it returns false if there is more than one user.
             wp_set_current_user($user[0]->ID, $userData->name); // Login user
@@ -90,14 +146,14 @@ class login_with_twitch
             do_action('wp_login', $userData->name); // Login user
             wp_redirect(home_url()); // Redirect to homepage
             exit;
-        } elseif($user === false) {
+        } elseif ($user === false) {
             //We don't have a user, setup a new one.
-			if($this->preCheckUser($userData->email) == true or username_exists($userData->name) !== false){
+            if ($this->preCheckUser($userData->email) == true or username_exists($userData->name) !== false) {
                 //Make sure the email isn't already registered to prevent accidental modifications to an already existing account.
-                wp_die('This email is already in use. Please ask the site owner for support.'); // User failed to create
+                wp_die('This email or username is already in use. Please ask the site owner for support.'); // User failed to create
             }
             $user = $this->createNewUser($userData->_id, $userData->name, $userData->display_name, $userData->email, $userauth->access_token);
-			if(is_wp_error($user)){
+            if (is_wp_error($user)) {
                 //If there was some kind of error in the user creation then just drop everything an die.
                 wp_die('There was an issue creating your account. Please contact the site owner.');
             }
@@ -110,7 +166,7 @@ class login_with_twitch
             } else {
                 wp_die('There was an issuer setting up your account. Please try again'); // User failed to create
             }
-        }else{
+        } else {
             //This should never really happen.
             wp_die('There was an issue creating your account/logging you in.');
         }
@@ -126,7 +182,8 @@ class login_with_twitch
      * Setup admin pages & fields
      */
 
-    public function twitchUserProfileFields($user){
+    public function twitchUserProfileFields($user)
+    {
         ?>
         <!--suppress HtmlUnknownTarget -->
         <h2>Login With Twitch</h2>
@@ -134,13 +191,25 @@ class login_with_twitch
             <tr>
                 <th><label for="twitch_ID"><?php _e("Twitch ID"); ?></label></th>
                 <td>
-                    <input type="text" name="twitch_ID" id="twitch_ID" value="<?php echo esc_attr( get_user_meta( $user->ID, 'twitch_ID', true ) ); ?>" class="regular-text" readonly /><br />
+                    <input type="text" name="twitch_ID" id="twitch_ID"
+                           value="<?php echo esc_attr(get_user_meta($user->ID, 'twitch_ID', true)); ?>"
+                           class="regular-text" readonly/><br/>
                 </td>
             </tr>
             <tr>
                 <th><label for="user_follows"><?php _e("User follows our channel"); ?></label></th>
                 <td>
-                    <input type="text" name="user_follows" id="user_follows" value="<?php echo (esc_attr( get_user_meta( $user->ID, 'user_follows', true ) ) === 1) ? 'Yes' : 'No'; ?>" class="regular-text" readonly /><br />
+                    <input type="text" name="user_follows" id="user_follows"
+                           value="<?php echo (esc_attr(get_user_meta($user->ID, 'user_follows', true)) == 1) ? 'Yes' : 'No'; ?>"
+                           class="regular-text" readonly/><br/>
+                </td>
+            </tr>
+            <tr>
+                <th><label for="user_subs"><?php _e("User subs to our channel"); ?></label></th>
+                <td>
+                    <input type="text" name="user_follows" id="user_follows"
+                           value="<?php echo (esc_attr(get_user_meta($user->ID, 'user_subs', true)) == 1) ? 'Yes' : 'No'; ?>"
+                           class="regular-text" readonly/><br/>
                 </td>
             </tr>
         </table>
@@ -150,17 +219,18 @@ class login_with_twitch
     public function loginWithTwitchSettings()
     {
         add_menu_page(
-            'login-with-twitch-settings', 'Login with Twitch', 'read', 'login-with-twitch-settings', array(
+            'login-with-twitch-settings', 'Login with Twitch', 'read', 'login-with-twitch-settings.php', array(
             $this,
             'loginWithTwitchIntroPage'
         ),
             'none', null
         );
-        add_submenu_page('login-with-twitch-settings', 'API Settings', 'API Settings', 'manage_options', 'loginWithTwitchSettingsPage', array($this, 'twitch_admin_page_settings'));
+        add_submenu_page('login-with-twitch-settings.php', 'API Settings', 'API Settings', 'manage_options', 'loginWithTwitchSettingsPage', array($this, 'twitch_admin_page_settings'));
     }
 
-    public function loginWithTwitchIntroPage(){
-        $info = get_plugin_data( __FILE__, $markup = true, $translate = true );
+    public function loginWithTwitchIntroPage()
+    {
+        $info = get_plugin_data(__FILE__, $markup = true, $translate = true);
         $gitHubData = (!empty($this->getGithubData())) ? $this->getGithubData()[0] : false;
         ?>
         <div class="wrap">
@@ -168,30 +238,40 @@ class login_with_twitch
                 <div id="post-body">
                     <div style="width: calc(50% - 2px); margin-right: 1px; float: left; ">
                         <h3>Login With Twitch</h3>
-                        <p>Thanks for downloading my plugin. Feel free to leave me feedback on my <a href="https://github.com/cmcgee93/wp-login-with-twitch">GitHub Repo</a>. </p>
+                        <p>Thanks for downloading my plugin. Feel free to leave me feedback on my <a
+                                    href="https://github.com/cmcgee93/wp-login-with-twitch">GitHub Repo</a>. </p>
                         <p>
                             <strong>Install steps:</strong>
                         </p>
                         <ol>
                             <li>After installing this plugin head to API Settings on the left sidebar.</li>
                             <li>In the "Twitch Name" field add your twitch name.</li>
-                            <li>Now head over to Twitch and <a href="https://dev.twitch.tv/dashboard/apps/create"> register your own Twitch App </a></li>
+                            <li>Now head over to Twitch and <a href="https://dev.twitch.tv/dashboard/apps/create">
+                                    register your own Twitch App </a></li>
                             <li>Under OAuth Redirect URL insert the url from your dashboard in the API Settings.</li>
-                            <li>Once registered you should receive a Client ID and a Client Secret. (Client ID is a public ID and everyone will see it. Do not allow to see your secret though.) </li>
-                            <li>Insert the Client ID & Secret into your WordPress dashboard in the API settings section. </li>
-                            <li>Now you can log out and test everything works. By using the "Login With Twitch" button on your admin login page.</li>
+                            <li>Once registered you should receive a Client ID and a Client Secret. (Client ID is a
+                                public ID and everyone will see it. Do not allow to see your secret though.)
+                            </li>
+                            <li>Insert the Client ID & Secret into your WordPress dashboard in the API settings
+                                section.
+                            </li>
+                            <li>Now you can log out and test everything works. By using the "Login With Twitch" button
+                                on your admin login page.
+                            </li>
                         </ol>
 
-                        <p>If you have any issues please feel free to raise an issue on GitHub using <a href="https://github.com/cmcgee93/wp-login-with-twitch/blob/master/ISSUE_TEMPLATE.md">this template.</a></p>
+                        <p>If you have any issues please feel free to raise an issue on GitHub using <a
+                                    href="https://github.com/cmcgee93/wp-login-with-twitch/blob/master/ISSUE_TEMPLATE.md">this
+                                template.</a></p>
                     </div>
-                    <?php if($gitHubData !== false): ?>
+                    <?php if ($gitHubData !== false): ?>
                         <div style="width: calc(50% - 2px); margin-left: 1px; background: #efefef; float: left;">
                             <h3>Plugin Information</h3>
                             <ul>
                                 <li>Current Install Version - <?php echo $info['Version']; ?></li>
                                 <li>Latest Version - <?php echo $gitHubData->tag_name; ?></li>
                                 <li>Build Name - <?php echo $gitHubData->name; ?></li>
-                                <li><?php echo  ($gitHubData->prerelease === false) ? 'Release' : 'Pre-Release Build'; ?></li>
+                                <li><?php echo ($gitHubData->prerelease === false) ? 'Release' : 'Pre-Release Build'; ?></li>
                                 <li><a href="<?php echo $info['AuthorURI']; ?>">Github Repo</a></li>
                             </ul>
                         </div>
@@ -214,7 +294,6 @@ class login_with_twitch
         </p>
         <?php
     }
-
 
 
     public function twitchEnqueueStylesLogin()
@@ -246,9 +325,9 @@ class login_with_twitch
                 <tr>
                     <th scope="row">
                         Twitch Return URL <br/>
-                        <small> Allows Twitch to send data to your site after clicking "Login with Twitch" </small>
+                        <small> Allows Twitch to send data to your site after clicking "Login with Twitch"</small>
                     </th>
-                    <td><input type="text" readonly size="150" value="<?php echo $this->getRedirectUrl(true);?>"></td>
+                    <td><input type="text" readonly size="150" value="<?php echo $this->getRedirectUrl(true); ?>"></td>
                 </tr>
                 </tbody>
             </table>
@@ -294,6 +373,20 @@ class login_with_twitch
             'twitch-api-settings',
             'twitch_api_settings_section'
         );
+        add_settings_field(
+            'redirect_user',
+            "Page to redirect users to for follow only posts",
+            array($this, 'redirect_user_callback'),
+            'twitch-api-settings',
+            'twitch_api_settings_section'
+        );
+        add_settings_field(
+            'redirect_user_sub',
+            "Page to redirect users to for sub only posts",
+            array($this, 'redirect_user_sub_callback'),
+            'twitch-api-settings',
+            'twitch_api_settings_section'
+        );
 
         add_settings_section('twitch-api-settings', 'API Settings', array($this, 'loginWithTwitchSettingsPage'), array($this, 'loginWithTwitchSettingsPage'));
 
@@ -329,6 +422,28 @@ class login_with_twitch
             isset($this->options['client_secret']) ? esc_attr($this->options['client_secret']) : ''
         );
     }
+    public function redirect_user_callback()
+    {
+        $selected = (isset($this->options['redirect_user'])) ? $this->options['redirect_user'] :  false;
+        wp_dropdown_pages(array(
+                'name' => 'twitch_api_options[redirect_user]',
+                'id' => 'twitch_api_options[redirect_user]',
+                'echo' => true,
+                'selected' => $selected
+
+        ));
+    }
+    public function redirect_user_sub_callback()
+    {
+        $selected = (isset($this->options['redirect_user_sub'])) ? $this->options['redirect_user_sub'] :  false;
+        wp_dropdown_pages(array(
+            'name' => 'twitch_api_options[redirect_user_sub]',
+            'id' => 'twitch_api_options[redirect_user_sub]',
+            'echo' => true,
+            'selected' => $selected
+
+        ));
+    }
 
     /**
      * Setup admin pages & fields  - END
@@ -337,8 +452,40 @@ class login_with_twitch
     /**
      * User Functions
      */
+    public function checkUserSubs($user, $access_token){
+        $url = "https://api.twitch.tv/kraken/channels/$user/subscriptions/$this->ourTwitchName";
+        $args = array();
+        $method = 'GET'; // or 'POST', 'HEAD', etc
+        $headers = array(
+            "Accept" => 'application/vnd.twitchtv.v5+json',
+            "Client-ID" => "$this->clientID", // Public token
+            "Authorization" => "OAuth $access_token" // Token of the user that is currently authenticated
+        );
+        $request = array(
+            'headers' => $headers,
+            'method' => $method,
+        );
 
-    public function checkUserFollowers($user, $access_token){
+        if ($method == 'GET' && !empty($args) && is_array($args)) {
+            $url = add_query_arg($args, $url);
+        } else {
+            $request['body'] = json_encode($args);
+        }
+
+
+        $response = wp_remote_request($url, $request);
+        if($response['response']['code'] === 422){
+            return false; // We don't have affiliate/partnership.
+        }elseif ($response['response']['code'] === 404) {
+            return false; // User isn't subbed to us.
+        } else {
+            return true;
+        }
+        die(); // Shouldn't land here. Just die in this case.
+
+    }
+    public function checkUserFollowers($user, $access_token)
+    {
         // There is a bunch of data we can return from this - URL: https://dev.twitch.tv/docs/v3/reference/follows#get-usersuserfollowschannelstarget
         $url = "https://api.twitch.tv/kraken/users/$user/follows/channels/$this->ourTwitchName";
         $args = array();
@@ -361,46 +508,66 @@ class login_with_twitch
 
 
         $response = wp_remote_request($url, $request);
-        if($response['response']['code'] === 404){
+        if ($response['response']['code'] === 404) {
             return false; // User isn't following.
-        }else{
+        } else {
             return true;
         }
         die(); // Shouldn't land here. Just die in this case.
     }
-    public function preCheckUser($email){
-        $args = array(
-            'search'       => $email,
-            'number'       => 1,
-            'fields'       => 'all',
-        );
-        $result = get_users( $args );
-        if(!empty($result) && is_array($result)){
-            return true;
+
+    public function updateTwitchUserMeta($userID, $username, $access_token)
+    {
+//        echo '<pre>', var_dump($this->checkUserFollowers($username, $access_token)),'</pre>';die();
+        if ($this->checkUserFollowers($username, $access_token) == true) {
+            //User does follow our channel
+            update_user_meta($userID, 'user_follows', true);
+        } else {
+            //User doesn't follow our channel
+            update_user_meta($userID, 'user_follows', false);
+        }
+        if($this->checkUserSubs($username, $access_token) == true){
+            update_user_meta($userID, 'user_subs', true);
         }else{
+            update_user_meta($userID, 'user_subs', false);
+        }
+    }
+
+    public function preCheckUser($email)
+    {
+        $args = array(
+            'search' => $email,
+            'number' => 1,
+            'fields' => 'all',
+        );
+        $result = get_users($args);
+        if (!empty($result) && is_array($result)) {
+            return true;
+        } else {
             //No user was found.
             return false;
         }
         wp_die('Error searching for users'); // Should never land here.
     }
+
     public function findUser($username, $email, $twitchID)
     {
         $args = array(
-            'role'         => 'Subscriber',
+            'role' => 'Subscriber',
             'role__not_in' => array('Administrator', 'Editor', 'Contributor'),
-            'meta_key'     => 'twitch_ID',
-            'meta_value'   => $twitchID,
+            'meta_key' => 'twitch_ID',
+            'meta_value' => $twitchID,
             'meta_compare' => '=',
-            'orderby'      => 'login',
-            'order'        => 'ASC',
-            'search'       => $email,
-            'number'       => 1,
-            'fields'       => 'all',
+            'orderby' => 'login',
+            'order' => 'ASC',
+            'search' => $email,
+            'number' => 1,
+            'fields' => 'all',
         );
-        $result = get_users( $args );
-        if(!empty($result) && is_array($result)){
+        $result = get_users($args);
+        if (!empty($result) && is_array($result)) {
             return $result;
-        }else{
+        } else {
             //No user was found.
             return false;
         }
@@ -423,13 +590,7 @@ class login_with_twitch
         if ($user) {
             wp_update_user(array('ID' => $user, 'role' => 'Subscriber'));
             update_user_meta($user, 'twitch_ID', $id);
-            if($this->checkUserFollowers($username, $access_token) === true){
-                //User does follow our channel
-                update_user_meta($user, 'user_follows', true);
-            }else{
-                //User doesn't follow our channel
-                update_user_meta($user, 'user_follows', false);
-            }
+            $this->updateTwitchUserMeta($user, $username, $access_token); // Update user status if the user is subbed/following us.
             return $user;
         } else {
             wp_die('There was an error setting up your account');
@@ -482,9 +643,9 @@ class login_with_twitch
     public function getRedirectUrl($scope)
     {
         //Scope determines if we should return the Twitch scope or not.
-        if($scope){
+        if ($scope) {
             return get_home_url() . '/wp-json/login-with-twitch/v1/register/' . $this->getScope();
-        }else{
+        } else {
             return get_home_url() . '/wp-json/login-with-twitch/v1/register/';
         }
 
@@ -492,34 +653,34 @@ class login_with_twitch
 
     public function getScope()
     {
-        // TODO: Refine Scope
         return "&scope=user_read+channel_read+openid+user_read+user_subscriptions+channel_check_subscription";
     }
 
 
-    public function getGithubData(){
+    public function getGithubData()
+    {
         /**
          * Quick way to grab the latest information on the plugin.
          */
         $args = array(
-            'timeout'     => 5,
+            'timeout' => 5,
             'redirection' => 5,
             'httpversion' => '1.0',
-            'user-agent'  => home_url(),
-            'blocking'    => true,
-            'headers'     => array(),
-            'cookies'     => array(),
-            'body'        => null,
-            'compress'    => false,
-            'decompress'  => true,
-            'sslverify'   => true,
-            'stream'      => false,
-            'filename'    => null
+            'user-agent' => home_url(),
+            'blocking' => true,
+            'headers' => array(),
+            'cookies' => array(),
+            'body' => null,
+            'compress' => false,
+            'decompress' => true,
+            'sslverify' => true,
+            'stream' => false,
+            'filename' => null
         );
-        $response = wp_remote_get( 'https://api.github.com/repos/cmcgee93/wp-login-with-twitch/releases', $args );
-        if($response['response']['code'] === 200){
+        $response = wp_remote_get('https://api.github.com/repos/cmcgee93/wp-login-with-twitch/releases', $args);
+        if ($response['response']['code'] === 200) {
             return json_decode($response['body']);
-        }else{
+        } else {
             return false;
         }
         return false;
@@ -531,11 +692,14 @@ class login_with_twitch
 
 $helper = new login_with_twitch();
 
-register_deactivation_hook( __FILE__, 'deactivateScript' );
-register_uninstall_hook(    __FILE__, 'uninstallScript');
-function deactivateScript(){
+register_deactivation_hook(__FILE__, 'deactivateScript');
+register_uninstall_hook(__FILE__, 'uninstallScript');
+function deactivateScript()
+{
     // Currently there is nothing that needs to execute when you deactivate this plugin.
 }
-function uninstallScript(){
+
+function uninstallScript()
+{
     delete_option('twitch_api_options');
 }
