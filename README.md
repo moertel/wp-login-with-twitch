@@ -21,9 +21,11 @@ The main purpose of this plugin is just to allow you to login using your Twitch 
  2. In the "Twitch Name" field add your twitch name.
  3. Now head over to Twitch and  [register your own Twitch App ](https://dev.twitch.tv/dashboard/apps/create).
  4. Under OAuth Redirect URL insert the url from your dashboard in the API Settings.
- 5. Once registered you should receive a Client ID and a Client Secret. (Client ID is a public ID and everyone will see it. Do not allow to see your secret though.) 
+ 5. Once registered you should receive a Client ID and a Client Secret. (Client ID is a public ID and everyone will see it. Do not allow anyone to see your secret though.) 
  6. Insert the Client ID & Secret into your WordPress dashboard in the API settings section.
  7. Now you can log out and test everything works. By using the "Login With Twitch" button on your admin login page.
 
 #### Disclaimer ####
 This plugin does not guarantee security, I have tested it and taken precautions to secure date however accidents do happen and things do get overlooked. This plugin downloaded from my repo does not store any information that would allow you access to any-ones Twitch account. However as it is open source I can't be held responsible for any modified versions of this plugin. 
+
+This plugin is also not created by Twitch and is unofficial. Twitch don't take any responsibility for this plugin.
