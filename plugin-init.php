@@ -45,13 +45,13 @@ class login_with_twitch
         add_action('edit_user_profile', array($this, 'twitchUserProfileFields')); // Add User Settings
         add_action('init', 'followerOnlyPosts', 0); // Register follower only post type.
         add_action('init', 'subscriberOnlyPosts', 0); // Register Subscriber only post type.
-        add_action('pre_get_posts', array($this, 'testCase'), 0); // Register Subscriber only post type.
+        add_action('pre_get_posts', array($this, 'restrictUserAccess'), 0); // Register Subscriber only post type.
     }
 
-    public function testCase($query)
+    public function restrictUserAccess($query)
     {
         /**
-         * TODO Check for subscriber and send them somewhere
+         * Restrict user access to the post types follower-posts and subscriber-posts.
          */
         if (!is_admin() && in_array($query->get('post_type'), array('follower-posts'))) {
             if (!is_user_logged_in()) {
@@ -690,7 +690,7 @@ class login_with_twitch
      */
 }
 
-$helper = new login_with_twitch();
+$loginWithTwitchHelper = new login_with_twitch();
 
 register_deactivation_hook(__FILE__, 'deactivateScript');
 register_uninstall_hook(__FILE__, 'uninstallScript');
