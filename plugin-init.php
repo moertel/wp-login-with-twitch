@@ -518,7 +518,6 @@ class login_with_twitch
 
     public function updateTwitchUserMeta($userID, $username, $access_token)
     {
-//        echo '<pre>', var_dump($this->checkUserFollowers($username, $access_token)),'</pre>';die();
         if ($this->checkUserFollowers($username, $access_token) == true) {
             //User does follow our channel
             update_user_meta($userID, 'user_follows', true);
