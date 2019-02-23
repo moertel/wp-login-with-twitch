@@ -1,7 +1,7 @@
 <?php
 defined('ABSPATH') or die("Cannot access pages directly.");
-require_once(plugin_dir_path(__FILE__) . '/admin/follower-post-type.php');
-require_once(plugin_dir_path(__FILE__) . '/admin/sub-post-type.php');
+//require_once(plugin_dir_path(__FILE__) . '/admin/follower-post-type.php');
+//require_once(plugin_dir_path(__FILE__) . '/admin/sub-post-type.php');
 
 /*
 Plugin Name: Login with Twitch
@@ -28,7 +28,7 @@ class login_with_twitch
         $this->clientID = $fields['client_id']; // Set the client ID
         $this->clientSecret = $fields['client_secret']; // Setting Client Secret
         $this->ourTwitchName = $fields['our_twitch_name'];  // Setting Twitch Name For Website
-        $this->redirectPage = isset($fields['redirect_user']) ? $fields['redirect_user'] : site_url() ;  // where redirects go for anyone not following
+        $this->redirectPage = isset($fields['redirect_user']) ? $fields['redirect_user'] : site_url();  // where redirects go for anyone not following
         $this->subRedirectPage = isset($fields['redirect_user_sub']) ? $fields['redirect_user_sub'] : site_url(); // where redirects go for anyone not subbed to us
 
     }
@@ -43,9 +43,9 @@ class login_with_twitch
         add_action('admin_menu', array($this, 'loginWithTwitchSettings')); // Add menu page
         add_action('admin_init', array($this, 'registerTwitchSettings')); // Register plugin settings
         add_action('edit_user_profile', array($this, 'twitchUserProfileFields')); // Add User Settings
-        add_action('init', 'followerOnlyPosts', 0); // Register follower only post type.
-        add_action('init', 'subscriberOnlyPosts', 0); // Register Subscriber only post type.
         add_action('pre_get_posts', array($this, 'restrictUserAccess'), 0); // Register Subscriber only post type.
+        add_action('add_meta_boxes', array($this, 'wplwt_add_custom_box'));
+        add_action('save_post', array($this, 'wplwt_save_postdata'));
     }
 
     public function restrictUserAccess($query)
@@ -53,40 +53,40 @@ class login_with_twitch
         /**
          * Restrict user access to the post types follower-posts and subscriber-posts.
          */
-        if (!is_admin() && in_array($query->get('post_type'), array('follower-posts'))) {
-            if (!is_user_logged_in()) {
-                //User is not logged in
-                wp_redirect(get_admin_url());
-                exit();
-                return $query;
-            } else {
-                $userFollows = (int)get_user_meta(get_current_user_id(), 'user_follows', true);
-                if ($userFollows !== 1) {
-                    //User doesn't follow us.
-                    wp_redirect(get_permalink($this->redirectPage));
-                    exit();
-                    return $query;
-                } else {
-                    return $query;
-                }
-            }
+        global $post;
+
+        if ($post == null) {
+            //Bail early if we don't have a post variable
+            return $query;
         }
-        if (!is_admin() && in_array($query->get('post_type'), array('subscriber-posts'))) {
-            if (!is_user_logged_in()) {
-                //User is not logged in
-                wp_redirect(get_admin_url());
-                exit();
-                return $query;
+
+        if (!is_admin() && is_user_logged_in()) {
+            $postVisibility = (!empty(get_post_meta($post->ID, '_wplwt_post_visibility', true))) ? get_post_meta($post->ID, '_wplwt_post_visibility', true) : null;
+            $userFollows = (int)get_user_meta(get_current_user_id(), 'user_follows', true);
+            $userSubs = (int)get_user_meta(get_current_user_id(), 'user_subs', true);
+
+            if ($postVisibility) {
+                switch ($postVisibility):
+                    case 'followers':
+                        if ($userFollows !== 1) {
+                            wp_redirect(get_permalink($this->redirectPage));
+                        } else {
+                            return $query;
+                        }
+                        break;
+                    case 'subscribers':
+                        if ($userSubs !== 1) {
+                            wp_redirect(get_permalink($this->subRedirectPage));
+                        } else {
+                            return $query;
+                        }
+                        break;
+                    default:
+                        break;
+                endswitch;
             } else {
-                $userSubs = (int)get_user_meta(get_current_user_id(), 'user_subs', true);
-                if ($userSubs !== 1) {
-                    //User doesn't follow us.
-                    wp_redirect(get_permalink($this->subRedirectPage));
-                    exit();
-                    return $query;
-                } else {
-                    return $query;
-                }
+                //Post visibility was not modified, return original query.
+                return $query;
             }
         }
     }
@@ -105,7 +105,7 @@ class login_with_twitch
 
     public function authenticateUser($userCode)
     {
-        $request = wp_remote_post("https://api.twitch.tv/api/oauth2/token?client_id=$this->clientID&client_secret=$this->clientSecret&code=$userCode&grant_type=authorization_code&redirect_uri=" . $this->getRedirectUrl(true));
+        $request = wp_remote_post("https://id.twitch.tv/oauth2/token?client_id=$this->clientID&client_secret=$this->clientSecret&code=$userCode&grant_type=authorization_code&redirect_uri=" . $this->getRedirectUrl(true));
         if ($request['response']['code'] === 200) {
             return json_decode($request['body']);
         } elseif ($request['response']['code'] === 400) {
@@ -136,30 +136,30 @@ class login_with_twitch
         $userauth = $this->authenticateUser($twitchCode); // Initial authentication with Twitch to ensure the user is a real user. - Will die if there is an issue with authentication
         $userData = $this->getUserChannelData($userauth->access_token); // Get the users channel data. - Will die if it can't get channel data.
         //Determine if we should create user or login.
-        $user = $this->findUser($userData->name, $userData->email, $userData->_id);
+        $user = $this->findUser($userData->login, $userData->email, $userData->id);
         if (is_array($user) && !empty($user)) {
-            $this->updateTwitchUserMeta($user[0], $userData->name, $userauth->access_token);
+            $this->updateTwitchUserMeta($user[0], $userData->login, $userauth->access_token);
             //We found a user so lets log them in.
             //User returns an array, 0 index should be our account were looking as it returns false if there is more than one user.
-            wp_set_current_user($user[0]->ID, $userData->name); // Login user
+            wp_set_current_user($user[0]->ID, $userData->login); // Login user
             wp_set_auth_cookie($user[0]->ID, false, true); // Login user
-            do_action('wp_login', $userData->name); // Login user
+            do_action('wp_login', $userData->login); // Login user
             wp_redirect(home_url()); // Redirect to homepage
             exit;
         } elseif ($user === false) {
             //We don't have a user, setup a new one.
-            if ($this->preCheckUser($userData->email) == true or username_exists($userData->name) !== false) {
+            if ($this->preCheckUser($userData->email) == true or username_exists($userData->login) !== false) {
                 //Make sure the email isn't already registered to prevent accidental modifications to an already existing account.
                 wp_die('This email or username is already in use. Please ask the site owner for support.'); // User failed to create
             }
-            $user = $this->createNewUser($userData->_id, $userData->name, $userData->display_name, $userData->email, $userauth->access_token);
+            $user = $this->createNewUser($userData->id, $userData->login, $userData->display_name, $userData->email, $userauth->access_token);
             if (is_wp_error($user)) {
                 //If there was some kind of error in the user creation then just drop everything an die.
                 wp_die('There was an issue creating your account. Please contact the site owner.');
             }
             if ($user && !is_wp_error($user)) {
                 //User is just the ID in this case so we don't need to access any arrays or objects.
-                wp_set_current_user($user, $userData->name); // Login user
+                wp_set_current_user($user, $userData->login); // Login user
                 wp_set_auth_cookie($user, false, true); // Login user
                 wp_redirect(home_url()); // Redirect to homepage
                 exit;
@@ -177,6 +177,53 @@ class login_with_twitch
     /*
      * Create & Configure End Points - END
      */
+
+    /*
+     * Setup post privileges - END
+     */
+
+    public function wplwt_add_custom_box()
+    {
+        $screens = ['post', 'page'];
+        foreach ($screens as $screen) {
+            add_meta_box(
+                'wplwt_box_id',           // Unique ID
+                'Custom Meta Box Title',  // Box title
+                array($this, 'wplwt_custom_box_html'),  // Content callback, must be of type callable
+                $screen                   // Post type
+            );
+        }
+    }
+
+    public function wplwt_custom_box_html($post)
+    {
+        $value = get_post_meta($post->ID, '_wplwt_post_visibility', true);
+        ?>
+        <label for="wplwt_visibility">Post Visibility (Login With Twitch)</label>
+        <select name="wplwt_visibility" id="wplwt_visibility" class="postbox">
+            <option value="">Default</option>
+            <option value="something" <?php selected($value, 'followers'); ?>>Followers</option>
+            <option value="else" <?php selected($value, 'subscribers'); ?>>Subscribers</option>
+        </select>
+        <?php
+    }
+
+    public function wplwt_save_postdata($post_id)
+    {
+        if (array_key_exists('wplwt_visibility', $_POST)) {
+            update_post_meta(
+                $post_id,
+                '_wplwt_post_visibility',
+                $_POST['wplwt_visibility']
+            );
+        }
+    }
+
+
+    /*
+     * Setup post privileges - END
+     */
+
 
     /**
      * Setup admin pages & fields
@@ -288,7 +335,7 @@ class login_with_twitch
         ?>
         <p>
 
-            <a href="https://api.twitch.tv/kraken/oauth2/authorize?response_type=code&client_id=<?php echo (!empty($this->clientID)) ? $this->clientID : null; ?>&redirect_uri=<?php echo $this->getRedirectUrl(true); ?>"
+            <a href="https://id.twitch.tv/oauth2/authorize?client_id=<?php echo (!empty($this->clientID)) ? $this->clientID : null; ?>&redirect_uri=<?php echo $this->getRedirectUrl(false); ?>&response_type=code&scope=user:read:email+channel:read:subscriptions&force_verify=true"
                class="button button-large twitch-btn">Login with Twitch</a>
 
         </p>
@@ -327,7 +374,7 @@ class login_with_twitch
                         Twitch Return URL <br/>
                         <small> Allows Twitch to send data to your site after clicking "Login with Twitch"</small>
                     </th>
-                    <td><input type="text" readonly size="150" value="<?php echo $this->getRedirectUrl(true); ?>"></td>
+                    <td><input type="text" readonly size="150" value="<?php echo $this->getRedirectUrl(false); ?>"></td>
                 </tr>
                 </tbody>
             </table>
@@ -422,20 +469,22 @@ class login_with_twitch
             isset($this->options['client_secret']) ? esc_attr($this->options['client_secret']) : ''
         );
     }
+
     public function redirect_user_callback()
     {
-        $selected = (isset($this->options['redirect_user'])) ? $this->options['redirect_user'] :  false;
+        $selected = (isset($this->options['redirect_user'])) ? $this->options['redirect_user'] : false;
         wp_dropdown_pages(array(
-                'name' => 'twitch_api_options[redirect_user]',
-                'id' => 'twitch_api_options[redirect_user]',
-                'echo' => true,
-                'selected' => $selected
+            'name' => 'twitch_api_options[redirect_user]',
+            'id' => 'twitch_api_options[redirect_user]',
+            'echo' => true,
+            'selected' => $selected
 
         ));
     }
+
     public function redirect_user_sub_callback()
     {
-        $selected = (isset($this->options['redirect_user_sub'])) ? $this->options['redirect_user_sub'] :  false;
+        $selected = (isset($this->options['redirect_user_sub'])) ? $this->options['redirect_user_sub'] : false;
         wp_dropdown_pages(array(
             'name' => 'twitch_api_options[redirect_user_sub]',
             'id' => 'twitch_api_options[redirect_user_sub]',
@@ -452,14 +501,16 @@ class login_with_twitch
     /**
      * User Functions
      */
-    public function checkUserSubs($user, $access_token){
-        $url = "https://api.twitch.tv/kraken/channels/$user/subscriptions/$this->ourTwitchName";
+    public function checkUserSubs($user, $access_token)
+    {
+        $url = "https://api.twitch.tv/helix/subscriptions?broadcaster_id=$user";
         $args = array();
         $method = 'GET'; // or 'POST', 'HEAD', etc
         $headers = array(
+            'Authorization' => 'Bearer ' . $access_token,
+            'Client-ID' => $this->clientID,
+            'scope' => 'channel:read:subscriptions',
             "Accept" => 'application/vnd.twitchtv.v5+json',
-            "Client-ID" => "$this->clientID", // Public token
-            "Authorization" => "OAuth $access_token" // Token of the user that is currently authenticated
         );
         $request = array(
             'headers' => $headers,
@@ -472,28 +523,43 @@ class login_with_twitch
             $request['body'] = json_encode($args);
         }
 
-
         $response = wp_remote_request($url, $request);
-        if($response['response']['code'] === 422){
+        if ($response['response']['code'] === 422) {
             return false; // We don't have affiliate/partnership.
-        }elseif ($response['response']['code'] === 404) {
+        } elseif ($response['response']['code'] === 404) {
             return false; // User isn't subbed to us.
-        } else {
-            return true;
+        } elseif ($response['response']['code'] === 200) {
+            $response = json_decode($response['body']);
+            if (!empty($response->data)) {
+                $filteredSubList = wp_filter_object_list($response->data, array('broadcaster_name' => $this->ourTwitchName));
+                if (!empty($filteredSubList)) {
+                    return true;
+                } else {
+                    return false;
+                }
+            }
+
         }
         die(); // Shouldn't land here. Just die in this case.
 
     }
-    public function checkUserFollowers($user, $access_token)
+
+    public function getOurID($access_token)
     {
-        // There is a bunch of data we can return from this - URL: https://dev.twitch.tv/docs/v3/reference/follows#get-usersuserfollowschannelstarget
-        $url = "https://api.twitch.tv/kraken/users/$user/follows/channels/$this->ourTwitchName";
+        $ourTwitchID = get_transient('our_twitch_id');
+        if (!empty($ourTwitchID)) {
+            //Check if we have a cached twitch ID
+            return $ourTwitchID;
+        }
+
+        $url = "https://api.twitch.tv/helix/users?login=$this->ourTwitchName";
         $args = array();
-        $method = 'GET'; // or 'POST', 'HEAD', etc
+        $method = 'GET';
         $headers = array(
+            'Authorization' => 'Bearer ' . $access_token,
+            'Client-ID' => $this->clientID,
+            'scope' => 'user:read:email:channel:read:subscriptions',
             "Accept" => 'application/vnd.twitchtv.v5+json',
-            "Client-ID" => "$this->clientID", // Public token
-            "Authorization" => "OAuth $access_token" // Token of the user that is currently authenticated
         );
         $request = array(
             'headers' => $headers,
@@ -508,39 +574,79 @@ class login_with_twitch
 
 
         $response = wp_remote_request($url, $request);
-        if ($response['response']['code'] === 404) {
-            return false; // User isn't following.
+        if ($response['response']['code'] === 200) {
+            //Cache our profile
+            set_transient('our_twitch_id', $response['body'], MONTH_IN_SECONDS);
+            $body = json_decode($response['body'])->data[0];
+            if (is_int($body->id)) {
+                return $body->id;
+            } else {
+                return false;
+            }
+        }
+
+    }
+
+    public function checkUserFollowers($user, $access_token)
+    {
+        if (get_transient('our_twitch_id')) {
+            $ourProfile = get_transient('our_twitch_id');
+            $ourTwitchID = json_decode($ourProfile)->data[0]->id;
         } else {
+            $ourTwitchID = $this->getOurID($access_token);
+        }
+        $url = "https://api.twitch.tv/helix/users/follows?from_id=$ourTwitchID&to_id=$user&first=100";
+        $args = array();
+        $method = 'GET'; // or 'POST', 'HEAD', etc
+        $headers = array(
+            'Authorization' => 'Bearer ' . $access_token,
+            'Client-ID' => $this->clientID,
+            "Accept" => 'application/vnd.twitchtv.v5+json',
+        );
+        $request = array(
+            'headers' => $headers,
+            'method' => $method,
+        );
+
+        if ($method == 'GET' && !empty($args) && is_array($args)) {
+            $url = add_query_arg($args, $url);
+        } else {
+            $request['body'] = json_encode($args);
+        }
+
+
+        $response = wp_remote_request($url, $request);
+        $body = json_decode($response['body']);
+        $filteredSubList = wp_filter_object_list($body->data, array('to_id' => "$user"));
+        if (!empty($filteredSubList)) {
             return true;
+        } else {
+            return false;
         }
         die(); // Shouldn't land here. Just die in this case.
     }
 
     public function updateTwitchUserMeta($userID, $username, $access_token)
     {
-        if ($this->checkUserFollowers($username, $access_token) == true) {
+        $twitchUserID = get_user_meta($userID->ID, 'twitch_ID', true);
+        if ($this->checkUserFollowers($twitchUserID, $access_token) == true) {
             //User does follow our channel
-            update_user_meta($userID, 'user_follows', true);
+            update_user_meta($userID->ID, 'user_follows', true);
         } else {
             //User doesn't follow our channel
-            update_user_meta($userID, 'user_follows', false);
+            update_user_meta($userID->ID, 'user_follows', false);
         }
-        if($this->checkUserSubs($username, $access_token) == true){
-            update_user_meta($userID, 'user_subs', true);
-        }else{
-            update_user_meta($userID, 'user_subs', false);
+        if ($this->checkUserSubs($twitchUserID, $access_token) == true) {
+            update_user_meta($userID->ID, 'user_subs', true);
+        } else {
+            update_user_meta($userID->ID, 'user_subs', false);
         }
     }
 
     public function preCheckUser($email)
     {
-        $args = array(
-            'search' => $email,
-            'number' => 1,
-            'fields' => 'all',
-        );
-        $result = get_users($args);
-        if (!empty($result) && is_array($result)) {
+        $user = get_user_by('email', $email);
+        if ($user !== false) {
             return true;
         } else {
             //No user was found.
@@ -601,15 +707,16 @@ class login_with_twitch
     {
         /**
          * Gets the users channel data
-         * See reference: https://dev.twitch.tv/docs/v5/reference/channels#get-channel
+         * See reference: https://dev.twitch.tv/docs/api/reference/#get-users
          */
-        $url = 'https://api.twitch.tv/kraken/channel';
+        $url = 'https://api.twitch.tv/helix/users';
         $args = array();
         $method = 'GET';
         $headers = array(
+            'Authorization' => 'Bearer ' . $access_token,
+            'Client-ID' => $this->clientID,
+            'scope' => 'user:read:email:channel:read:subscriptions',
             "Accept" => 'application/vnd.twitchtv.v5+json',
-            "Client-ID" => "$this->clientID", // Public token
-            "Authorization" => "OAuth $access_token" // Token of the user that is currently authenticated
         );
         $request = array(
             'headers' => $headers,
@@ -625,9 +732,9 @@ class login_with_twitch
 
         $response = wp_remote_request($url, $request);
         if ($response['response']['code'] === 200) {
-            return json_decode($response['body']);
+            return json_decode($response['body'])->data[0];
         } else {
-            wp_die('API failed to retrieve your acount. Please try again.');
+            wp_die('API failed to retrieve your account. Please try again.');
         }
         return false;
     }
@@ -687,6 +794,8 @@ class login_with_twitch
     /**
      * Utility Functions - END
      */
+
+
 }
 
 $loginWithTwitchHelper = new login_with_twitch();
