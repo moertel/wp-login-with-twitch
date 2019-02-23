@@ -81,6 +81,13 @@ class login_with_twitch
                             return $query;
                         }
                         break;
+                    case 'followers-subs':
+                        if ($userFollows !== 1 || $userSubs !==1) {
+                            wp_redirect(get_permalink($this->redirectPage));
+                        } else {
+                            return $query;
+                        }
+                        break;
                     default:
                         break;
                 endswitch;
@@ -188,7 +195,7 @@ class login_with_twitch
         foreach ($screens as $screen) {
             add_meta_box(
                 'wplwt_box_id',           // Unique ID
-                'Custom Meta Box Title',  // Box title
+                'Login With Twitch Settings',  // Box title
                 array($this, 'wplwt_custom_box_html'),  // Content callback, must be of type callable
                 $screen                   // Post type
             );
@@ -204,6 +211,7 @@ class login_with_twitch
             <option value="">Default</option>
             <option value="something" <?php selected($value, 'followers'); ?>>Followers</option>
             <option value="else" <?php selected($value, 'subscribers'); ?>>Subscribers</option>
+            <option value="else" <?php selected($value, 'followers-subs'); ?>>Subscribers</option>
         </select>
         <?php
     }
