@@ -432,7 +432,7 @@ class login_with_twitch
     public function our_twitch_name_callback()
     {
         printf(
-            '<input type="password" id="our_twitch_name" name="twitch_api_options[our_twitch_name]" value="%s" size="40" />',
+            '<input type="text" id="our_twitch_name" name="twitch_api_options[our_twitch_name]" value="%s" size="40" />',
             isset($this->options['our_twitch_name']) ? esc_attr($this->options['our_twitch_name']) : ''
         );
     }
