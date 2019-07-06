@@ -43,7 +43,7 @@ class login_with_twitch
         add_action('admin_menu', array($this, 'loginWithTwitchSettings')); // Add menu page
         add_action('admin_init', array($this, 'registerTwitchSettings')); // Register plugin settings
         add_action('edit_user_profile', array($this, 'twitchUserProfileFields')); // Add User Settings
-        add_action('pre_get_posts', array($this, 'restrictUserAccess'), 0); // Register Subscriber only post type.
+        add_action('template_redirect', array($this, 'restrictUserAccess'), 0); // Register Subscriber only post type.
         add_action('add_meta_boxes', array($this, 'wplwt_add_custom_box'));
         add_action('save_post', array($this, 'wplwt_save_postdata'));
     }
@@ -53,48 +53,25 @@ class login_with_twitch
         /**
          * Restrict user access to the post types follower-posts and subscriber-posts.
          */
-        global $post;
-
-        if ($post == null) {
-            //Bail early if we don't have a post variable
-            return $query;
-        }
-
-        if (!is_admin() && is_user_logged_in()) {
-            $postVisibility = (!empty(get_post_meta($post->ID, '_wplwt_post_visibility', true))) ? get_post_meta($post->ID, '_wplwt_post_visibility', true) : null;
+        if (is_user_logged_in()) {
+            global $post;
+            $postVisibility = (!empty(get_post_meta($post->ID, 'wplwt_post_visibility', true))) ? get_post_meta($post->ID, 'wplwt_post_visibility', true) : null;
             $userFollows = (int)get_user_meta(get_current_user_id(), 'user_follows', true);
             $userSubs = (int)get_user_meta(get_current_user_id(), 'user_subs', true);
-
             if ($postVisibility) {
-                switch ($postVisibility):
-                    case 'followers':
-                        if ($userFollows !== 1) {
-                            wp_redirect(get_permalink($this->redirectPage));
-                        } else {
-                            return $query;
-                        }
-                        break;
-                    case 'subscribers':
-                        if ($userSubs !== 1) {
-                            wp_redirect(get_permalink($this->subRedirectPage));
-                        } else {
-                            return $query;
-                        }
-                        break;
-                    case 'followers-subs':
-                        if ($userFollows !== 1 || $userSubs !== 1) {
-                            wp_redirect(get_permalink($this->redirectPage));
-                        } else {
-                            return $query;
-                        }
-                        break;
-                    default:
-                        break;
-                endswitch;
-            } else {
-                //Post visibility was not modified, return original query.
-                return $query;
+                if ($postVisibility == 'followers' && $userFollows !== 1) {
+                    wp_redirect(get_permalink($this->redirectPage), 302);
+                    die();
+                } elseif ($postVisibility == 'subscribers' && $userSubs !== 1) {
+                    wp_redirect(get_permalink($this->subRedirectPage), 302);
+                    die();
+                } elseif ($postVisibility == 'followers-subs' && $userFollows !== 1 || $userSubs !== 1) {
+                    wp_redirect(get_permalink($this->redirectPage), 302);
+                    die();
+                }
             }
+        }else{
+            wp_redirect( wp_login_url(), 302 );
         }
     }
 
@@ -117,7 +94,7 @@ class login_with_twitch
             return json_decode($request['body']);
         } else {
             $body = json_decode($request['body']);
-            wp_die($body->message,$body->status);
+            wp_die($body->message, $body->status);
         }
     }
 
@@ -202,14 +179,14 @@ class login_with_twitch
 
     public function wplwt_custom_box_html($post)
     {
-        $value = get_post_meta($post->ID, '_wplwt_post_visibility', true);
+        $value = get_post_meta($post->ID, 'wplwt_post_visibility', true);
         ?>
         <label for="wplwt_visibility">Post Visibility (Login With Twitch)</label>
         <select name="wplwt_visibility" id="wplwt_visibility" class="postbox">
             <option value="">Default</option>
             <option value="followers" <?php selected($value, 'followers'); ?>>Followers</option>
             <option value="subscribers" <?php selected($value, 'subscribers'); ?>>Subscribers</option>
-            <option value="followers-subs" <?php selected($value, 'followers-subs'); ?>>Subscribers</option>
+            <option value="followers-subs" <?php selected($value, 'followers-subs'); ?>>Followers & Subs</option>
         </select>
         <?php
     }
@@ -219,7 +196,7 @@ class login_with_twitch
         if (array_key_exists('wplwt_visibility', $_POST)) {
             update_post_meta(
                 $post_id,
-                '_wplwt_post_visibility',
+                'wplwt_post_visibility',
                 $_POST['wplwt_visibility']
             );
         }
@@ -530,7 +507,7 @@ class login_with_twitch
         }
 
         $response = wp_remote_request($url, $request);
-        if(!is_wp_error($response)){
+        if (!is_wp_error($response)) {
             $responseData = json_decode($response['body']);
             if (!empty($responseData->data)) {
                 $filteredSubList = wp_filter_object_list($responseData->data, array('broadcaster_name' => $this->ourTwitchName));
@@ -542,7 +519,7 @@ class login_with_twitch
                     return false;
                 }
             }
-        }else{
+        } else {
             return false;
         }
     }
