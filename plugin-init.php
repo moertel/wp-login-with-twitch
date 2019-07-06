@@ -7,7 +7,7 @@ defined('ABSPATH') or die("Cannot access pages directly.");
 Plugin Name: Login with Twitch
 Plugin URI: https://github.com/cmcgee93/wp-login-with-twitch
 Description: Allows you to create users/login with Twitch
-Version: 0.3
+Version: 0.5
 Author: Chris McGee
 Author URI: https://github.com/cmcgee93
 */
@@ -82,7 +82,7 @@ class login_with_twitch
                         }
                         break;
                     case 'followers-subs':
-                        if ($userFollows !== 1 || $userSubs !==1) {
+                        if ($userFollows !== 1 || $userSubs !== 1) {
                             wp_redirect(get_permalink($this->redirectPage));
                         } else {
                             return $query;
@@ -115,12 +115,10 @@ class login_with_twitch
         $request = wp_remote_post("https://id.twitch.tv/oauth2/token?client_id=$this->clientID&client_secret=$this->clientSecret&code=$userCode&grant_type=authorization_code&redirect_uri=" . $this->getRedirectUrl(true));
         if ($request['response']['code'] === 200) {
             return json_decode($request['body']);
-        } elseif ($request['response']['code'] === 400) {
-            wp_die('API Failure. Please check your settings are correct.');
         } else {
-            wp_die('API failure, invalid response.');
+            $body = json_decode($request['body']);
+            wp_die($body->message,$body->status);
         }
-        die(); // We shouldn't land here. Just die.
     }
 
     function getUserAuth(WP_REST_Request $request)
@@ -145,7 +143,7 @@ class login_with_twitch
         //Determine if we should create user or login.
         $user = $this->findUser($userData->login, $userData->email, $userData->id);
         if (is_array($user) && !empty($user)) {
-            $this->updateTwitchUserMeta($user[0], $userData->login, $userauth->access_token);
+            $this->updateTwitchUserMeta($user[0]->data->ID, $userData->login, $userauth->access_token);
             //We found a user so lets log them in.
             //User returns an array, 0 index should be our account were looking as it returns false if there is more than one user.
             wp_set_current_user($user[0]->ID, $userData->login); // Login user
@@ -209,9 +207,9 @@ class login_with_twitch
         <label for="wplwt_visibility">Post Visibility (Login With Twitch)</label>
         <select name="wplwt_visibility" id="wplwt_visibility" class="postbox">
             <option value="">Default</option>
-            <option value="something" <?php selected($value, 'followers'); ?>>Followers</option>
-            <option value="else" <?php selected($value, 'subscribers'); ?>>Subscribers</option>
-            <option value="else" <?php selected($value, 'followers-subs'); ?>>Subscribers</option>
+            <option value="followers" <?php selected($value, 'followers'); ?>>Followers</option>
+            <option value="subscribers" <?php selected($value, 'subscribers'); ?>>Subscribers</option>
+            <option value="followers-subs" <?php selected($value, 'followers-subs'); ?>>Subscribers</option>
         </select>
         <?php
     }
@@ -457,7 +455,7 @@ class login_with_twitch
     public function our_twitch_name_callback()
     {
         printf(
-            '<input type="text" id="our_twitch_name" name="twitch_api_options[our_twitch_name]" value="%s" size="40" />',
+            '<input type="password" id="our_twitch_name" name="twitch_api_options[our_twitch_name]" value="%s" size="40" />',
             isset($this->options['our_twitch_name']) ? esc_attr($this->options['our_twitch_name']) : ''
         );
     }
@@ -532,24 +530,21 @@ class login_with_twitch
         }
 
         $response = wp_remote_request($url, $request);
-        if ($response['response']['code'] === 422) {
-            return false; // We don't have affiliate/partnership.
-        } elseif ($response['response']['code'] === 404) {
-            return false; // User isn't subbed to us.
-        } elseif ($response['response']['code'] === 200) {
-            $response = json_decode($response['body']);
-            if (!empty($response->data)) {
-                $filteredSubList = wp_filter_object_list($response->data, array('broadcaster_name' => $this->ourTwitchName));
+        if(!is_wp_error($response)){
+            $responseData = json_decode($response['body']);
+            if (!empty($responseData->data)) {
+                $filteredSubList = wp_filter_object_list($responseData->data, array('broadcaster_name' => $this->ourTwitchName));
                 if (!empty($filteredSubList)) {
+                    //They are subbed, return true.
                     return true;
                 } else {
+                    //They are not subbed, return false.
                     return false;
                 }
             }
-
+        }else{
+            return false;
         }
-        die(); // Shouldn't land here. Just die in this case.
-
     }
 
     public function getOurID($access_token)
@@ -636,18 +631,20 @@ class login_with_twitch
 
     public function updateTwitchUserMeta($userID, $username, $access_token)
     {
-        $twitchUserID = get_user_meta($userID->ID, 'twitch_ID', true);
+        $twitchUserID = get_user_meta($userID, 'twitch_ID', true);
+
         if ($this->checkUserFollowers($twitchUserID, $access_token) == true) {
             //User does follow our channel
-            update_user_meta($userID->ID, 'user_follows', true);
+            update_user_meta($userID, 'user_follows', true);
         } else {
             //User doesn't follow our channel
-            update_user_meta($userID->ID, 'user_follows', false);
+            update_user_meta($userID, 'user_follows', false);
         }
+
         if ($this->checkUserSubs($twitchUserID, $access_token) == true) {
-            update_user_meta($userID->ID, 'user_subs', true);
+            update_user_meta($userID, 'user_subs', true);
         } else {
-            update_user_meta($userID->ID, 'user_subs', false);
+            update_user_meta($userID, 'user_subs', false);
         }
     }
 
